@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
 	"github.com/niftynei/glightning/glightning"
 	"io"
 	"log"
@@ -86,6 +87,11 @@ func handleAuth(next http.Handler) http.Handler {
 	})
 }
 
+func authWrapper(path string, f func(http.ResponseWriter, *http.Request)) {
+	handler := http.HandlerFunc(f)
+	router.Handle(path, handleAuth(handler))
+}
+
 func handleRPC(w http.ResponseWriter, req *http.Request) {
 	local, err := net.Dial("unix", rest.RPCFile)
 	if err != nil {
@@ -139,31 +145,47 @@ type InvoiceRequest struct {
 	ExposePrivateChans bool        `json:"exposeprivatechannels"`
 }
 
-func handleInvoice(w http.ResponseWriter, req *http.Request) {
+func handleCreateInvoice(w http.ResponseWriter, req *http.Request) {
 	//TODO: parameters: msatoshi, currency, amount, description, expiry, metadata and webhook.
 
-	decoder := json.NewDecoder(req.Body)
-	var invReq InvoiceRequest
-	err := decoder.Decode(&invReq)
-	if err != nil {
-		panic(err)
-	}
-	var invoice *glightning.Invoice
-	var reqmsat string
-	reqmsat = fmt.Sprint(invReq.MilliSatoshis)
-	if strings.Compare(reqmsat, "any") == 0 {
-		invoice, err = lightning.CreateInvoiceAny(generateLabel(), invReq.Description, uint32(300), nil, "", false)
-	} else {
-		msat, err := strconv.ParseUint(reqmsat, 10, 64)
+	if req.Method == "POST" {
+		decoder := json.NewDecoder(req.Body)
+		var invReq InvoiceRequest
+		err := decoder.Decode(&invReq)
 		if err != nil {
 			panic(err)
 		}
-		invoice, err = lightning.CreateInvoice(msat, generateLabel(), invReq.Description, uint32(300), nil, "", false)
+		var invoice *glightning.Invoice
+		var reqmsat string
+		reqmsat = fmt.Sprint(invReq.MilliSatoshis)
+		if strings.Compare(reqmsat, "any") == 0 {
+			invoice, err = lightning.CreateInvoiceAny(generateLabel(), invReq.Description, uint32(300), nil, "", false)
+		} else {
+			msat, err := strconv.ParseUint(reqmsat, 10, 64)
+			if err != nil {
+				panic(err)
+			}
+			invoice, err = lightning.CreateInvoice(msat, generateLabel(), invReq.Description, uint32(300), nil, "", false)
+		}
+		if err != nil {
+			panic(err)
+		}
+		restResponse, _ := json.Marshal(invoice)
+		w.Header().Set("content-type", "application/json; charset=utf-8")
+		w.Write([]byte(restResponse))
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
+}
+
+func handleGetInvoice(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	inv, err := lightning.GetInvoice(params["label"])
 	if err != nil {
-		panic(err)
+		http.Error(w, "Invalid label", http.StatusBadRequest)
+		return
 	}
-	restResponse, _ := json.Marshal(invoice)
+	restResponse, _ := json.Marshal(inv)
 	w.Header().Set("content-type", "application/json; charset=utf-8")
 	w.Write([]byte(restResponse))
 }
@@ -183,10 +205,7 @@ func registerOptions(p *glightning.Plugin) {
 	p.RegisterOption(glightning.NewOption("rest-key", "Server key", " "))
 }
 
-func authWrapper(path string, f func(http.ResponseWriter, *http.Request)) {
-	handler := http.HandlerFunc(f)
-	http.Handle(path, handleAuth(handler))
-}
+var router *mux.Router
 
 func onInit(plugin *glightning.Plugin, options map[string]string, config *glightning.Config) {
 	log.Printf("versiion: "+VERSION+" initialized for port %s\n", options["rest-port"])
@@ -195,14 +214,17 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	lightning = glightning.NewLightning()
 	lightning.StartUp(config.RpcFile, config.LightningDir)
 
+	router = mux.NewRouter()
+
 	authWrapper("/info", handleInfo)
 	authWrapper("/rpc", handleRPC)
-	authWrapper("/invoice", handleInvoice)
+	authWrapper("/invoice", handleCreateInvoice)
+	authWrapper("/invoice/{label}", handleGetInvoice)
 	authWrapper("/invoices", handleInvoices)
 
 	if options["rest-cert"] != " " {
-		log.Fatal(http.ListenAndServeTLS(":"+rest.Port, options["rest-cert"], options["rest-key"], nil))
+		log.Fatal(http.ListenAndServeTLS(":"+rest.Port, options["rest-cert"], options["rest-key"], router))
 	} else {
-		log.Fatal(http.ListenAndServe(":"+rest.Port, nil))
+		log.Fatal(http.ListenAndServe(":"+rest.Port, router))
 	}
 }

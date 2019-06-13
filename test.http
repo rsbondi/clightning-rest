@@ -17,3 +17,7 @@ Authorization: Basic dXNlcjpwYXNz
 ###
 GET http://127.0.0.1:9222/invoices
 Authorization: Basic dXNlcjpwYXNz
+
+###
+GET http://127.0.0.1:9222/invoice/1560444054
+Authorization: Basic dXNlcjpwYXNz
