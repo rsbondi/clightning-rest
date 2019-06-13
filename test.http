@@ -1,0 +1,19 @@
+###
+POST http://127.0.0.1:9222/rpc
+Authorization: Basic dXNlcjpwYXNz
+
+{"jsonrpc":"2.0", "id":"0", "method":"listconfigs", "params": []}
+
+###
+GET http://127.0.0.1:9222/info
+Authorization: Basic dXNlcjpwYXNz
+
+###
+POST http://127.0.0.1:9222/invoice
+Authorization: Basic dXNlcjpwYXNz
+
+{"msatoshi":"any", "description": "test invoice endpoint"}
+
+###
+GET http://127.0.0.1:9222/invoices
+Authorization: Basic dXNlcjpwYXNz
