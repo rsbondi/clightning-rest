@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/mux"
 	"github.com/niftynei/glightning/glightning"
 	"io"
 	"log"
@@ -22,6 +21,8 @@ var plugin *glightning.Plugin
 var lightning *glightning.Lightning
 var rest *Rest
 var local net.Conn
+
+const paystreamWait = 10 * time.Second
 
 type Rest struct {
 	Username string
@@ -89,7 +90,7 @@ func handleAuth(next http.Handler) http.Handler {
 
 func authWrapper(path string, f func(http.ResponseWriter, *http.Request)) {
 	handler := http.HandlerFunc(f)
-	router.Handle(path, handleAuth(handler))
+	http.Handle(path, handleAuth(handler))
 }
 
 func handleRPC(w http.ResponseWriter, req *http.Request) {
@@ -145,6 +146,16 @@ type InvoiceRequest struct {
 	ExposePrivateChans bool        `json:"exposeprivatechannels"`
 }
 
+func handleInvoice(w http.ResponseWriter, req *http.Request) {
+	if req.Method == "POST" {
+		handleCreateInvoice(w, req)
+	} else if req.Method == "GET" {
+		handleGetInvoice(w, req)
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
+
 func handleCreateInvoice(w http.ResponseWriter, req *http.Request) {
 	//TODO: parameters: msatoshi, currency, amount, description, expiry, metadata and webhook.
 
@@ -179,8 +190,8 @@ func handleCreateInvoice(w http.ResponseWriter, req *http.Request) {
 }
 
 func handleGetInvoice(w http.ResponseWriter, req *http.Request) {
-	params := mux.Vars(req)
-	inv, err := lightning.GetInvoice(params["label"])
+	id := req.URL.Path[len("/invoice/"):]
+	inv, err := lightning.GetInvoice(id)
 	if err != nil {
 		http.Error(w, "Invalid label", http.StatusBadRequest)
 		return
@@ -205,8 +216,6 @@ func registerOptions(p *glightning.Plugin) {
 	p.RegisterOption(glightning.NewOption("rest-key", "Server key", " "))
 }
 
-var router *mux.Router
-
 func onInit(plugin *glightning.Plugin, options map[string]string, config *glightning.Config) {
 	log.Printf("versiion: "+VERSION+" initialized for port %s\n", options["rest-port"])
 	options["rpc-file"] = fmt.Sprintf("%s/%s", config.LightningDir, config.RpcFile)
@@ -214,17 +223,14 @@ func onInit(plugin *glightning.Plugin, options map[string]string, config *glight
 	lightning = glightning.NewLightning()
 	lightning.StartUp(config.RpcFile, config.LightningDir)
 
-	router = mux.NewRouter()
-
 	authWrapper("/info", handleInfo)
 	authWrapper("/rpc", handleRPC)
-	authWrapper("/invoice", handleCreateInvoice)
-	authWrapper("/invoice/{label}", handleGetInvoice)
+	authWrapper("/invoice/", handleInvoice)
 	authWrapper("/invoices", handleInvoices)
 
 	if options["rest-cert"] != " " {
-		log.Fatal(http.ListenAndServeTLS(":"+rest.Port, options["rest-cert"], options["rest-key"], router))
+		log.Fatal(http.ListenAndServeTLS(":"+rest.Port, options["rest-cert"], options["rest-key"], nil))
 	} else {
-		log.Fatal(http.ListenAndServe(":"+rest.Port, router))
+		log.Fatal(http.ListenAndServe(":"+rest.Port, nil))
 	}
 }
