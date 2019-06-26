@@ -58,13 +58,18 @@ func main() {
 	}
 }
 
-func authError(w http.ResponseWriter) {
-	rpcerr := &RpcResult{
-		Jsonrpc: "2.0",
-		Result:  "Not Authorized",
+func authError(w http.ResponseWriter, req *http.Request) {
+	if req.URL.Path == "/rpc" {
+		rpcerr := &RpcResult{
+			Jsonrpc: "2.0",
+			Result:  "Not Authorized",
+		}
+		rpcResponse, _ := json.Marshal(rpcerr)
+		w.Write(rpcResponse)
+	} else {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("403 - Forbidden!"))
 	}
-	rpcResponse, _ := json.Marshal(rpcerr)
-	w.Write(rpcResponse)
 
 }
 
@@ -73,7 +78,7 @@ func handleAuth(next http.Handler) http.Handler {
 		authHeader := strings.SplitN(req.Header.Get("Authorization"), " ", 2)
 
 		if len(authHeader) != 2 || authHeader[0] != "Basic" {
-			authError(w)
+			authError(w, req)
 			return
 		}
 
@@ -84,7 +89,7 @@ func handleAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, req)
 			return
 		}
-		authError(w)
+		authError(w, req)
 	})
 }
 
